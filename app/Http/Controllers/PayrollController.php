@@ -106,10 +106,8 @@ class PayrollController extends Controller
             'net_salary' => $request->salary_pokok - $request->pph21,
         ]);
 
-        // 4. Kembalikan redirect GET 303 agar Inertia mengikuti dengan GET,
-        // bukan patch ulang ke /payroll.
-        return redirect()->route('payroll.index', ['period' => $payroll->period], 303)
-            ->with('message', 'Gaji Direksi berhasil diperbarui.');
+        // 4. Gunakan Inertia::location() untuk redirect aman dari request Inertia
+        return Inertia::location(route('payroll.index', ['period' => $payroll->period]));
     }
 
     /**
