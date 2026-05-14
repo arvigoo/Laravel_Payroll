@@ -15,10 +15,12 @@ class EmployeeController extends Controller
      */
     public function index(Request $request)
     {
+        $query = Employee::with('user')
+            ->where('team_id', $request->user()->current_team_id)
+            ->orderBy('name');
+
         return Inertia::render('Employees/Index', [
-            'employees' => Employee::where('team_id', $request->user()->current_team_id)
-                ->orderBy('name')
-                ->get(),
+            'employees' => $query->paginate(15),
             'flash' => [
                 'message' => session('message'),
             ],
@@ -30,6 +32,8 @@ class EmployeeController extends Controller
      */
     public function store(Request $request)
     {
+        $categories = 'Direksi,Staff,General,Produksi 1,Produksi 2';
+
         $validated = $request->validate([
             'nik' => [
                 'required', 
@@ -38,17 +42,56 @@ class EmployeeController extends Controller
             ],
             'name' => 'required|string|max:255',
             'position' => 'required|string|max:255',
-            'payroll_category' => 'required|string|in:Staff,Direksi',
-            'tax_status' => 'required|string|in:TK,K1,K2,K3',
+            'payroll_category' => "required|string|in:$categories",
+            'tax_status' => 'required|string|in:TK,K,K1,K2,K3',
             'base_salary' => 'required|numeric|min:0',
+            'daily_rate' => 'nullable|numeric|min:0',
+            'masa_kerja' => 'nullable|integer|min:0',
         ]);
 
-        // Tambahkan team_id secara otomatis dari user yang login
-        $validated['team_id'] = $request->user()->current_team_id;
+        $teamId = $request->user()->current_team_id;
 
-        Employee::create($validated);
+        \Illuminate\Support\Facades\DB::transaction(function () use ($validated, $teamId) {
+            // Auto create user for the employee
+            $user = \App\Models\User::create([
+                'name' => $validated['name'],
+                'email' => strtolower($validated['nik']) . '@indobox.com',
+                'password' => \Illuminate\Support\Facades\Hash::make('indobox123'),
+                'current_team_id' => $teamId,
+            ]);
 
-        return Redirect::route('employees.index')->with('message', 'Karyawan berhasil ditambahkan.');
+            // Attach user to the team
+            $user->teams()->attach($teamId);
+
+            // Create employee record and link to user
+            $validated['team_id'] = $teamId;
+            $validated['user_id'] = $user->id;
+            Employee::create($validated);
+        });
+
+        return Inertia::location(route('employees.index'));
+    }
+
+    /**
+     * Update data karyawan
+     */
+    public function update(Request $request, Employee $employee)
+    {
+        $categories = 'Direksi,Staff,General,Produksi 1,Produksi 2';
+
+        $validated = $request->validate([
+            'nik' => 'required|string|unique:employees,nik,' . $employee->id,
+            'name' => 'required|string|max:255',
+            'position' => 'required|string|max:255',
+            'payroll_category' => "required|string|in:$categories",
+            'tax_status' => 'required|string|in:TK,K,K1,K2,K3',
+            'base_salary' => 'required|numeric',
+            'daily_rate' => 'nullable|numeric|min:0',
+            'masa_kerja' => 'nullable|integer|min:0',
+        ]);
+
+        $employee->update($validated);
+        return Inertia::location(route('employees.index'));
     }
 
     /**
@@ -63,6 +106,29 @@ class EmployeeController extends Controller
 
         $employee->delete();
 
-        return Redirect::route('employees.index')->with('message', 'Karyawan berhasil dihapus.');
+        return Inertia::location(route('employees.index'));
+    }
+
+    /**
+     * Update data akun user (Ubah Password)
+     */
+    public function updateAccount(Request $request, Employee $employee)
+    {
+        if ($employee->team_id !== $request->user()->current_team_id) {
+            abort(403);
+        }
+
+        $validated = $request->validate([
+            'password' => 'required|string|min:8',
+        ]);
+
+        if ($employee->user) {
+            $employee->user->update([
+                'password' => \Illuminate\Support\Facades\Hash::make($validated['password']),
+            ]);
+            return Inertia::location(route('employees.index'))->with('message', 'Password berhasil diubah.');
+        }
+
+        return Inertia::location(route('employees.index'))->with('error', 'Karyawan ini tidak memiliki akun user.');
     }
 }
